@@ -97,7 +97,10 @@ export async function POST(request: Request) {
         !["accepted", "invited"].includes(participant.invitation_status)
       ) {
         return NextResponse.json(
-          { error: "You do not currently have permission to join this meeting." },
+          {
+            error:
+              "You do not currently have permission to join this meeting.",
+          },
           { status: 403 }
         );
       }
