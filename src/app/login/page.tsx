@@ -24,14 +24,13 @@ export default function LoginPage() {
       password,
     });
 
-    setLoading(false);
-
     if (error) {
       setError(error.message);
+      setLoading(false);
       return;
     }
 
-    router.push("/");
+    router.replace("/dashboard");
     router.refresh();
   }
 

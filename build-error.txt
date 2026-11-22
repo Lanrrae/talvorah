@@ -1,0 +1,127 @@
+﻿
+> talvorah@0.1.0 build
+> next build
+
+Γû▓ Next.js 16.4.6 (Turbopack)
+- Environments: .env.local
+Γ£ô Running next.config.ts took 1359ms
+- Cache Components enabled
+- Partial Prefetching enabled
+
+npm.cmd : ΓÜá The "middleware" file convention is deprecated. Please use "proxy" instead.
+At line:1 char:1
++ npm.cmd run build 2>&1 | Out-File -FilePath build-error.txt -Encoding ...
++ ~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ΓÜá The "middle...proxy" instead.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+  To migrate automatically, run:
+  npx @next/codemod@canary middleware-to-proxy .
+
+  Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+
+> Build error occurred
+Error: Turbopack build failed with 7 errors:
+./src/app/dashboard/departments/page.tsx:3:1
+Error: The "use client" directive must be placed before other expressions. Move it to the top of the file to resolve this issue.
+  [90m1 |[0m [36mimport[0m [33mOrganisationSwitcher[0m [36mfrom[0m [32m"@/components/OrganisationSwitcher"[0m;
+  [90m2 |[0m
+[31m[1m>[0m [90m3 |[0m [32m"use client"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^[0m
+  [90m4 |[0m
+  [90m5 |[0m [36mimport[0m { useState } [36mfrom[0m [32m"react"[0m;
+  [90m6 |[0m
+
+Ecmascript file had an error
+
+
+./src/app/dashboard/projects/page.tsx:3:1
+Error: The "use client" directive must be placed before other expressions. Move it to the top of the file to resolve this issue.
+  [90m1 |[0m [36mimport[0m [33mOrganisationSwitcher[0m [36mfrom[0m [32m"@/components/OrganisationSwitcher"[0m;
+  [90m2 |[0m
+[31m[1m>[0m [90m3 |[0m [32m"use client"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^[0m
+  [90m4 |[0m
+  [90m5 |[0m [36mimport[0m { useState } [36mfrom[0m [32m"react"[0m;
+  [90m6 |[0m
+
+Ecmascript file had an error
+
+
+./src/app/dashboard/tasks/page.tsx:3:1
+Error: The "use client" directive must be placed before other expressions. Move it to the top of the file to resolve this issue.
+  [90m1 |[0m [36mimport[0m [33mOrganisationSwitcher[0m [36mfrom[0m [32m"@/components/OrganisationSwitcher"[0m;
+  [90m2 |[0m
+[31m[1m>[0m [90m3 |[0m [32m"use client"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^[0m
+  [90m4 |[0m
+  [90m5 |[0m [36mimport[0m { useState } [36mfrom[0m [32m"react"[0m;
+  [90m6 |[0m
+
+Ecmascript file had an error
+
+
+./src/app/dashboard/departments/page.tsx:5:10
+Error: You're importing a module that depends on `useState` into a React Server Component module. This API is only available in 
+Client Components. To fix, mark the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+  [90m3 |[0m [32m"use client"[0m;
+  [90m4 |[0m
+[31m[1m>[0m [90m5 |[0m [36mimport[0m { useState } [36mfrom[0m [32m"react"[0m;
+  [90m  |[0m          [31m[1m^^^^^^^^[0m
+  [90m6 |[0m
+  [90m7 |[0m [36mtype[0m [33mDepartment[0m = {
+  [90m8 |[0m   id: number;
+
+Ecmascript file had an error
+
+
+./src/app/dashboard/projects/page.tsx:5:10
+Error: You're importing a module that depends on `useState` into a React Server Component module. This API is only available in 
+Client Components. To fix, mark the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+  [90m3 |[0m [32m"use client"[0m;
+  [90m4 |[0m
+[31m[1m>[0m [90m5 |[0m [36mimport[0m { useState } [36mfrom[0m [32m"react"[0m;
+  [90m  |[0m          [31m[1m^^^^^^^^[0m
+  [90m6 |[0m
+  [90m7 |[0m [36mtype[0m [33mProject[0m = {
+  [90m8 |[0m   id: number;
+
+Ecmascript file had an error
+
+
+./src/app/dashboard/tasks/page.tsx:5:10
+Error: You're importing a module that depends on `useState` into a React Server Component module. This API is only available in 
+Client Components. To fix, mark the file (or its parent) with the `"use client"` directive.
+    Learn more: https://nextjs.org/docs/app/api-reference/directives/use-client
+  [90m3 |[0m [32m"use client"[0m;
+  [90m4 |[0m
+[31m[1m>[0m [90m5 |[0m [36mimport[0m { useState } [36mfrom[0m [32m"react"[0m;
+  [90m  |[0m          [31m[1m^^^^^^^^[0m
+  [90m6 |[0m
+  [90m7 |[0m [36mconst[0m initialTasks = [
+  [90m8 |[0m   { id: [35m1[0m, title: [32m"Complete website redesign"[0m, project: [32m"Website Development"[0m, 
+priority: [32m"H...[0m
+
+Ecmascript file had an error
+
+
+./src/app/api/meentings/token/route.ts:4:1
+Error: Module not found: Can't resolve '../../../../../utils/supabase/server'
+  [90m2 |[0m [36mimport[0m { [33mNextResponse[0m } [36mfrom[0m [32m"next/server"[0m;
+  [90m3 |[0m [36mimport[0m { cookies } [36mfrom[0m [32m"next/headers"[0m;
+[31m[1m>[0m [90m4 |[0m [36mimport[0m { createClient } [36mfrom[0m [32m"../../../../../utils/supabase/server"[0m;
+  [90m  |[0m [31m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m5 |[0m
+  [90m6 |[0m [36mtype[0m [33mRouteContext[0m = {
+  [90m7 |[0m   params: [33mPromise[0m<{ meetingId: string }>;
+
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
