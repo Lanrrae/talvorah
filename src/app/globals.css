@@ -1,3 +1,4 @@
+
 @import "tailwindcss";
 
 :root {
@@ -12,15 +13,219 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* =====================================
+   TALVORAH WORKSPACE FOUNDATION
+===================================== */
+
+.workspace-root {
+  --ws-bg: #f5f7fb;
+  --ws-surface: #ffffff;
+  --ws-text: #172033;
+  --ws-muted: #788397;
+  --ws-border: #e7ebf1;
+  --ws-track: #edf0f5;
+  --ws-accent: #16a34a;
+  --ws-accent-soft: #e8f7ed;
+  --ws-sidebar: #101e35;
+  --ws-sidebar-hover: #1b2c46;
+
+  min-height: 100vh;
+  background: var(--ws-bg);
+  color: var(--ws-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* LIGHT MODE */
+
+.workspace-root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* DARK MODE */
+
+.workspace-root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ws-bg: #0b1220;
+  --ws-surface: #141e2e;
+  --ws-text: #e8edf5;
+  --ws-muted: #9ba8bb;
+  --ws-border: #29364a;
+  --ws-track: #29364a;
+  --ws-accent-soft: #203c32;
+  --ws-sidebar: #080f1c;
+  --ws-sidebar-hover: #17253a;
+}
+
+/* ACCENT COLOURS */
+
+.workspace-root[data-accent="emerald"] {
+  --ws-accent: #16a34a;
+}
+
+.workspace-root[data-accent="blue"] {
+  --ws-accent: #1687d9;
+}
+
+.workspace-root[data-accent="violet"] {
+  --ws-accent: #805ad5;
+}
+
+.workspace-root[data-accent="rose"] {
+  --ws-accent: #e05275;
+}
+
+.workspace-root[data-accent="amber"] {
+  --ws-accent: #d69a21;
+}
+
+.workspace-root[data-accent="teal"] {
+  --ws-accent: #0d9488;
+}
+
+/* ACCENT SOFT BACKGROUNDS */
+
+.workspace-root[data-accent="emerald"] {
+  --ws-accent-soft: #e8f7ed;
+}
+
+.workspace-root[data-accent="blue"] {
+  --ws-accent-soft: #e6f2fc;
+}
+
+.workspace-root[data-accent="violet"] {
+  --ws-accent-soft: #f0ebfc;
+}
+
+.workspace-root[data-accent="rose"] {
+  --ws-accent-soft: #fcecf1;
+}
+
+.workspace-root[data-accent="amber"] {
+  --ws-accent-soft: #fcf4df;
+}
+
+.workspace-root[data-accent="teal"] {
+  --ws-accent-soft: #e3f5f2;
+}
+
+.workspace-root[data-theme="dark"][data-accent="emerald"] {
+  --ws-accent-soft: #203c32;
+}
+
+.workspace-root[data-theme="dark"][data-accent="blue"] {
+  --ws-accent-soft: #1c344b;
+}
+
+.workspace-root[data-theme="dark"][data-accent="violet"] {
+  --ws-accent-soft: #302747;
+}
+
+.workspace-root[data-theme="dark"][data-accent="rose"] {
+  --ws-accent-soft: #402632;
+}
+
+.workspace-root[data-theme="dark"][data-accent="amber"] {
+  --ws-accent-soft: #40351f;
+}
+
+.workspace-root[data-theme="dark"][data-accent="teal"] {
+  --ws-accent-soft: #1c3936;
+}
+
+/* SIDEBAR */
+
+.workspace-sidebar {
+  background: var(--ws-sidebar);
+  color: #ffffff;
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+.workspace-active-nav {
+  background: var(--ws-accent);
+  color: #ffffff;
+  box-shadow: 0 5px 16px rgba(0,0,0,0.12);
+}
+
+/* TOP NAVIGATION */
+
+.workspace-topbar {
+  background: var(--ws-surface);
+  border-color: var(--ws-border);
+  color: var(--ws-text);
+}
+
+/* CONTENT */
+
+.workspace-content {
+  background: var(--ws-bg);
+}
+
+.workspace-card {
+  background: var(--ws-surface);
+  border-color: var(--ws-border);
+  color: var(--ws-text);
+}
+
+/* SEARCH */
+
+.workspace-search {
+  background: var(--ws-bg);
+  border-color: var(--ws-border);
+  color: var(--ws-text);
+}
+
+.workspace-search:focus {
+  border-color: var(--ws-accent);
+}
+
+/* THEME CONTROLS */
+
+.workspace-control {
+  background: var(--ws-surface);
+  color: var(--ws-text);
+  border: 1px solid var(--ws-border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.workspace-control:focus {
+  border-color: var(--ws-accent);
+}
+
+.workspace-control option {
+  background: var(--ws-surface);
+  color: var(--ws-text);
+}
+
+/* DASHBOARD BANNER */
+
+.workspace-banner {
+  background:
+    radial-gradient(circle at 90% 10%, rgba(255,255,255,0.16), transparent 35%),
+    linear-gradient(120deg, var(--ws-accent), #123d36);
+  color: white;
+}
+
+/* SMOOTH SCROLLING */
+
+.workspace-root {
+  scroll-behavior: smooth;
+}
+
+/* RESPONSIVE */
+
+@media (max-width: 767px) {
+  .workspace-content {
+    padding: 20px 15px;
+  }
 }

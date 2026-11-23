@@ -1,8 +1,8 @@
+
 "use client";
 
 import OrganisationSwitcher from "@/components/OrganisationSwitcher";
-
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/utils/supabase/client";
 
@@ -14,8 +14,13 @@ type Employee = {
 };
 
 export default function EmployeesPage() {
+  const supabase = useMemo(() => createClient(), []);
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [organisationId, setOrganisationId] = useState("");
+  const [actorMemberId, setActorMemberId] = useState<string | null>(null);
+  const [isPlatformSuperAdmin, setIsPlatformSuperAdmin] = useState(false);
+
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("employee");
   const [search, setSearch] = useState("");
@@ -25,13 +30,12 @@ export default function EmployeesPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const supabase = createClient();
+  const getSelectedOrganisation = () => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("talvorah_organisation_id") || "";
+  };
 
-  useEffect(() => {
-    loadEmployees();
-  }, []);
-
-  async function loadEmployees() {
+  const loadEmployees = useCallback(async () => {
     setLoading(true);
     setError("");
 
@@ -41,50 +45,105 @@ export default function EmployeesPage() {
         error: authError,
       } = await supabase.auth.getUser();
 
-      if (authError || !user) {
+      if (authError) throw authError;
+
+      if (!user) {
+        setEmployees([]);
         setError("Please log in to view your organisation's employees.");
-        setLoading(false);
         return;
       }
+
+      const { data: superAdminResult, error: superAdminError } =
+        await supabase.rpc("is_platform_super_admin");
+
+      if (superAdminError) throw superAdminError;
+
+      const platformAdmin = superAdminResult === true;
+      setIsPlatformSuperAdmin(platformAdmin);
+
+      const selectedOrg = getSelectedOrganisation();
+
+      if (!selectedOrg) {
+        setEmployees([]);
+        setOrganisationId("");
+        setActorMemberId(null);
+        setError("Please select an organisation using the organisation switcher.");
+        return;
+      }
+
+      setOrganisationId(selectedOrg);
 
       const { data: membership, error: membershipError } = await supabase
         .from("organisation_members")
-        .select("organisation_id, role")
+        .select("id, organisation_id, role, status")
         .eq("user_id", user.id)
+        .eq("organisation_id", selectedOrg)
         .eq("status", "active")
-        .single();
+        .maybeSingle();
 
-      if (membershipError || !membership) {
-        setError(
-          "No active organisation membership was found for your account."
-        );
-        setLoading(false);
+      if (membershipError) throw membershipError;
+
+      if (!platformAdmin && !membership) {
+        setEmployees([]);
+        setActorMemberId(null);
+        setError("You do not have an active membership in this organisation.");
         return;
       }
 
-      setOrganisationId(membership.organisation_id);
+      setActorMemberId(membership?.id || null);
 
       const { data, error: employeesError } = await supabase
         .from("organisation_members")
         .select("user_id, role, status, created_at")
-        .eq("organisation_id", membership.organisation_id)
+        .eq("organisation_id", selectedOrg)
         .order("created_at", { ascending: false });
 
-      if (employeesError) {
-        throw employeesError;
-      }
+      if (employeesError) throw employeesError;
 
       setEmployees(data || []);
     } catch (err) {
-      console.error(err);
-      setError("Unable to load employees. Please try again.");
+      console.error("Employees loading error:", err);
+      setEmployees([]);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load employees. Please try again."
+      );
     } finally {
       setLoading(false);
     }
-  }
+  }, [supabase]);
+
+  useEffect(() => {
+    loadEmployees();
+
+    const handleOrganisationChange = () => {
+      setMessage("");
+      setError("");
+      loadEmployees();
+    };
+
+    window.addEventListener(
+      "talvorah:organisation-changed",
+      handleOrganisationChange
+    );
+
+    return () => {
+      window.removeEventListener(
+        "talvorah:organisation-changed",
+        handleOrganisationChange
+      );
+    };
+  }, [loadEmployees]);
 
   async function inviteEmployee(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
+    if (!organisationId) {
+      setError("Please select an organisation before inviting an employee.");
+      return;
+    }
+
     setSending(true);
     setMessage("");
     setError("");
@@ -96,7 +155,7 @@ export default function EmployeesPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email,
+          email: email.trim(),
           organisationId,
           role,
         }),
@@ -108,17 +167,52 @@ export default function EmployeesPage() {
         throw new Error(result.error || "Invitation failed.");
       }
 
+      const invitedEmail = email.trim();
+
       setMessage(result.message || "Invitation sent successfully.");
       setEmail("");
       setRole("employee");
       setShowInvite(false);
 
+      // Record the successful invitation in the central audit log.
+      const { error: auditError } = await supabase.rpc("write_audit_log", {
+        p_organisation_id: organisationId,
+        p_category: "employee",
+        p_action: "employee_invited",
+        p_title: "Employee invitation sent",
+        p_description: `An invitation was sent to ${invitedEmail}.`,
+        p_entity_type: "organisation_member",
+        p_entity_id: null,
+        p_actor_member_id: actorMemberId,
+        p_acting_as: isPlatformSuperAdmin
+          ? "Platform Super Admin"
+          : "Organisation member",
+        p_before_data: null,
+        p_after_data: {
+          email: invitedEmail,
+          role,
+          invitation_status: "sent",
+        },
+        p_metadata: {
+          source: "employees",
+          organisation_id: organisationId,
+        },
+      });
+
+      if (auditError) {
+        console.error("Audit logging failed:", auditError);
+        setMessage(
+          "Invitation sent successfully, but its audit record could not be saved."
+        );
+      }
+
       await loadEmployees();
     } catch (err) {
+      console.error("Employee invitation error:", err);
       setError(
         err instanceof Error
           ? err.message
-          : "Something went wrong. Please try again."
+          : "Something went wrong while sending the invitation."
       );
     } finally {
       setSending(false);
@@ -150,9 +244,10 @@ export default function EmployeesPage() {
             Organisation Workspace
           </p>
         </Link>
-<div className="mb-6 mt-4">
-  <OrganisationSwitcher />
-</div>
+
+        <div className="mb-6 mt-4">
+          <OrganisationSwitcher />
+        </div>
 
         <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-gray-500">
           Workspace
@@ -192,7 +287,7 @@ export default function EmployeesPage() {
             <p className="text-sm text-gray-500">Workspace / Employees</p>
             <h2 className="mt-2 text-2xl font-bold">Employees</h2>
             <p className="mt-1 text-sm text-gray-400">
-              Manage your organisation's workforce and invitations.
+              Manage your organisation&apos;s workforce and invitations.
             </p>
           </div>
 
@@ -202,7 +297,8 @@ export default function EmployeesPage() {
               setMessage("");
               setShowInvite(true);
             }}
-            className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-semibold transition hover:bg-purple-500"
+            disabled={!organisationId}
+            className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-semibold transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Invite Employee
           </button>
@@ -260,7 +356,7 @@ export default function EmployeesPage() {
                 <div className="mb-3 text-3xl">👥</div>
                 <h4 className="font-semibold">No members found</h4>
                 <p className="mt-2 text-sm text-gray-500">
-                  Invite employees to start building your organisation's
+                  Invite employees to start building your organisation&apos;s
                   workforce.
                 </p>
               </div>
@@ -339,7 +435,7 @@ export default function EmployeesPage() {
 
               <div>
                 <label className="mb-2 block text-sm text-gray-300">
-                  Assign Role
+                  Organisation Access Role
                 </label>
                 <select
                   value={role}
@@ -347,9 +443,11 @@ export default function EmployeesPage() {
                   className="w-full rounded-xl border border-white/10 bg-[#0c0c14] px-4 py-3 text-sm outline-none focus:border-purple-500"
                 >
                   <option value="employee">Employee</option>
-                  <option value="manager">Manager</option>
-                  <option value="department_head">Department Head</option>
                 </select>
+                <p className="mt-2 text-xs text-gray-500">
+                  Official designations and Head of Department appointments
+                  are managed separately by the Platform Super Admin.
+                </p>
               </div>
 
               <div className="rounded-xl border border-purple-500/20 bg-purple-500/10 p-4 text-xs leading-6 text-purple-200">

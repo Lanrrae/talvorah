@@ -1,469 +1,987 @@
 
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createClient } from "@/utils/supabase/client";
 
-const navItems = [
-  ["Overview", "/dashboard"],
-  ["Organisation", "/dashboard/organisation"],
-  ["Departments", "/dashboard/departments"],
-  ["Employees", "/dashboard/employees"],
-  ["Projects", "/dashboard/projects"],
-  ["Tasks", "/dashboard/tasks"],
-  ["Messages", "/dashboard/messages"],
-  ["Meetings & Calendar", "/dashboard/meetings"],
-  ["Documents", "/dashboard/documents"],
-  ["Settings", "/dashboard/settings"],
+type Tab =
+  | "organisation"
+  | "departments"
+  | "members"
+  | "account"
+  | "access"
+  | "platform";
+
+type Department = {
+  id: string;
+  name: string;
+  description?: string | null;
+  created_at?: string;
+};
+
+type Member = {
+  id: string;
+  user_id: string;
+  role: string;
+  status?: string | null;
+  department_id?: string | null;
+  designation?: string | null;
+};
+
+type Organisation = {
+  id: string;
+  name?: string;
+  [key: string]: unknown;
+};
+
+const tabs: { id: Tab; label: string; description: string }[] = [
+  {
+    id: "organisation",
+    label: "Organisation",
+    description: "Organisation profile and workspace information",
+  },
+  {
+    id: "departments",
+    label: "Departments",
+    description: "View departments within this organisation",
+  },
+  {
+    id: "members",
+    label: "Members",
+    description: "Employee and membership overview",
+  },
+  {
+    id: "access",
+    label: "Roles & Access",
+    description: "Understand administrative permissions",
+  },
+  {
+    id: "account",
+    label: "My Account",
+    description: "Your personal account information",
+  },
+  {
+    id: "platform",
+    label: "Platform Administration",
+    description: "Platform-level administration controls",
+  },
 ];
 
-const initialRoles = [
-  { role: "Super Admin", access: "Full platform access", users: 1 },
-  { role: "Organisation Admin", access: "Manage entire organisation", users: 3 },
-  { role: "Department Head", access: "Manage assigned department", users: 8 },
-  { role: "Manager", access: "Manage assigned teams and projects", users: 14 },
-  { role: "Employee", access: "Access assigned work and shared resources", users: 102 },
-];
-
-const initialLogs = [
-  { action: "Organisation profile updated", user: "Admin", date: "21 Nov 2026", status: "Successful" },
-  { action: "New employee added", user: "Admin", date: "20 Nov 2026", status: "Successful" },
-  { action: "Project created", user: "Alex Morgan", date: "19 Nov 2026", status: "Successful" },
-  { action: "Department settings changed", user: "Admin", date: "18 Nov 2026", status: "Successful" },
+const designations = [
+  "Officer 2",
+  "Officer 1",
+  "Assistant Manager",
+  "Manager",
+  "Senior Manager",
+  "Principal Manager",
+  "General Manager",
+  "Executive Director",
+  "MD/CEO",
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState("General");
-  const [organisationName, setOrganisationName] = useState("Your Organisation");
-  const [industry, setIndustry] = useState("Technology");
-  const [timezone, setTimezone] = useState("Africa/Lagos");
-  const [language, setLanguage] = useState("English");
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [taskNotifications, setTaskNotifications] = useState(true);
-  const [meetingNotifications, setMeetingNotifications] = useState(true);
-  const [announcementNotifications, setAnnouncementNotifications] = useState(true);
-  const [twoFactor, setTwoFactor] = useState(false);
-  const [showRoleForm, setShowRoleForm] = useState(false);
-  const [newRole, setNewRole] = useState("");
-  const [notice, setNotice] = useState("");
+  const supabase = useMemo(() => createClient(), []);
 
-  const [roles, setRoles] = useState(initialRoles);
+  const [activeTab, setActiveTab] = useState<Tab>("organisation");
+  const [organisation, setOrganisation] = useState<Organisation | null>(null);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [userEmail, setUserEmail] = useState("");
+  const [userId, setUserId] = useState("");
+  const [isPlatformSuperAdmin, setIsPlatformSuperAdmin] = useState(false);
+  const [currentRole, setCurrentRole] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
-  function saveSettings() {
-    setNotice("Your changes have been saved in this demo session.");
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+      if (!user) throw new Error("Please sign in to access settings.");
+
+      setUserId(user.id);
+      setUserEmail(user.email || "");
+
+      const { data: platformAdmin, error: platformError } =
+        await supabase.rpc("is_platform_super_admin");
+
+      if (platformError) {
+        console.warn("Platform administrator check:", platformError.message);
+      }
+
+      const platformAdminValue = platformAdmin === true;
+      setIsPlatformSuperAdmin(platformAdminValue);
+
+      const organisationId = window.localStorage.getItem(
+        "talvorah_organisation_id"
+      );
+
+      if (!organisationId) {
+        setOrganisation(null);
+        setDepartments([]);
+        setMembers([]);
+        setCurrentRole(platformAdminValue ? "Platform Super Admin" : "");
+        return;
+      }
+
+      const [
+        organisationResult,
+        departmentResult,
+        memberResult,
+      ] = await Promise.all([
+        supabase
+          .from("organisations")
+          .select("*")
+          .eq("id", organisationId)
+          .maybeSingle(),
+
+        supabase
+          .from("departments")
+          .select("id,name,description,created_at")
+          .eq("organisation_id", organisationId)
+          .order("name"),
+
+        supabase
+          .from("organisation_members")
+          .select("id,user_id,role,status,department_id,designation")
+          .eq("organisation_id", organisationId),
+      ]);
+
+      if (organisationResult.error) throw organisationResult.error;
+      if (departmentResult.error) throw departmentResult.error;
+      if (memberResult.error) throw memberResult.error;
+
+      setOrganisation(
+        (organisationResult.data as Organisation | null) || null
+      );
+      setDepartments((departmentResult.data || []) as Department[]);
+      setMembers((memberResult.data || []) as Member[]);
+
+      const ownMembership = (memberResult.data || []).find(
+        (member: Member) => member.user_id === user.id
+      );
+
+      setCurrentRole(
+        platformAdminValue
+          ? "Platform Super Admin"
+          : ownMembership?.role || "Organisation member"
+      );
+    } catch (err) {
+      console.error("Settings loading error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load workspace settings."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    loadSettings();
+
+    const handleOrganisationChange = () => {
+      setActiveTab("organisation");
+      loadSettings();
+    };
+
+    window.addEventListener(
+      "talvorah:organisation-changed",
+      handleOrganisationChange
+    );
+
+    return () => {
+      window.removeEventListener(
+        "talvorah:organisation-changed",
+        handleOrganisationChange
+      );
+    };
+  }, [loadSettings]);
+
+  const filteredMembers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return members;
+
+    return members.filter((member) =>
+      [
+        member.user_id,
+        member.role,
+        member.designation || "",
+        member.status || "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [members, search]);
+
+  const activeMembers = members.filter(
+    (member) => !member.status || member.status === "active"
+  );
+
+  const departmentName = (id?: string | null) => {
+    if (!id) return "Not assigned";
+
+    return (
+      departments.find((department) => department.id === id)?.name ||
+      "Unknown department"
+    );
+  };
+
+  const organisationName =
+    typeof organisation?.name === "string"
+      ? organisation.name
+      : "Selected organisation";
+
+  function renderOrganisation() {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-bold text-[#142d4e]">
+            Organisation profile
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            View information associated with the selected organisation.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-50 text-2xl text-emerald-700">
+              <span>🏢</span>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-bold text-[#142d4e]">
+                {organisationName}
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Organisation workspace
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Organisation name
+              </p>
+              <p className="mt-2 text-sm font-medium text-slate-700">
+                {organisationName}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Organisation ID
+              </p>
+              <p className="mt-2 break-all font-mono text-xs text-slate-600">
+                {organisation?.id || "Not available"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Departments
+              </p>
+              <p className="mt-2 text-sm font-medium text-slate-700">
+                {departments.length}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Active members
+              </p>
+              <p className="mt-2 text-sm font-medium text-slate-700">
+                {activeMembers.length}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex gap-3">
+            <span className="text-lg">ℹ️</span>
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900">
+                Organisation profile editing
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-amber-800">
+                Profile editing will be enabled after the organisation
+                profile fields and update permissions are confirmed. This
+                page currently displays the stored organisation information
+                without changing it.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  function addRole() {
-    if (!newRole.trim()) return;
-
-    setRoles((current) => [
-      ...current,
-      {
-        role: newRole.trim(),
-        access: "Custom permissions to be configured",
-        users: 0,
-      },
-    ]);
-
-    setNewRole("");
-    setShowRoleForm(false);
-    setNotice("New role added to the demonstration list.");
-  }
-
-  const tabs = [
-    "General",
-    "Roles & Permissions",
-    "Notifications",
-    "Security",
-    "Billing",
-    "Audit Logs",
-  ];
-
-  return (
-    <div className="min-h-screen bg-[#080b14] text-white flex">
-      <aside className="hidden lg:flex w-64 shrink-0 border-r border-white/10 bg-[#0b0f1a] flex-col p-5">
-        <div className="mb-10">
-          <h1 className="text-2xl font-bold tracking-wide">
-            Talvorah<span className="text-purple-400">.</span>
-          </h1>
-          <p className="text-xs text-gray-500 mt-1">Organisation Workspace</p>
-        </div>
-
-        <div className="mb-7 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-          <p className="text-xs text-gray-500">CURRENT ORGANISATION</p>
-          <p className="font-semibold mt-2">{organisationName}</p>
-          <p className="text-xs text-purple-400 mt-1">Organisation Admin</p>
-        </div>
-
-        <p className="text-xs uppercase tracking-wider text-gray-500 mb-3">
-          Workspace
-        </p>
-
-        <nav className="space-y-1">
-          {navItems.map(([label, href]) => (
-            <a
-              key={href}
-              href={href}
-              className={`block rounded-lg px-3 py-2.5 text-sm transition ${
-                label === "Settings"
-                  ? "bg-purple-500/15 text-purple-300 border border-purple-500/20"
-                  : "text-gray-400 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              {label}
-            </a>
-          ))}
-        </nav>
-
-        <div className="mt-auto border-t border-white/10 pt-5">
-          <p className="text-sm font-medium">Workspace Account</p>
-          <p className="text-xs text-gray-500 mt-1">admin@organisation.com</p>
-        </div>
-      </aside>
-
-      <main className="flex-1 min-w-0 p-5 md:p-8">
-        <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
+  function renderDepartments() {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
-            <p className="text-sm text-purple-400 mb-2">
-              WORKSPACE / ADMINISTRATION
-            </p>
-            <h2 className="text-3xl font-bold">Settings & Administration</h2>
-            <p className="text-gray-400 text-sm mt-2">
-              Configure your organisation, manage access and control your workspace.
+            <h2 className="text-lg font-bold text-[#142d4e]">
+              Department settings
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Departments currently registered in this organisation.
             </p>
           </div>
+
+          <span className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+            {departments.length} departments
+          </span>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          {departments.length === 0 ? (
+            <div className="p-10 text-center">
+              <div className="mb-3 text-3xl">🏢</div>
+              <p className="font-semibold text-[#142d4e]">
+                No departments found
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Departments will appear here once created.
+              </p>
+            </div>
+          ) : (
+            departments.map((department) => {
+              const count = members.filter(
+                (member) =>
+                  member.department_id === department.id &&
+                  (!member.status || member.status === "active")
+              ).length;
+
+              return (
+                <div
+                  key={department.id}
+                  className="flex items-center justify-between gap-4 border-b border-slate-100 p-4 last:border-b-0"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+                      <span>▦</span>
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-[#142d4e]">
+                        {department.name}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-slate-400">
+                        {department.description || "No description"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-slate-700">
+                      {count}
+                    </p>
+                    <p className="text-[10px] text-slate-400">Members</p>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <p className="text-xs leading-5 text-slate-400">
+          Department creation, renaming and deletion remain available through
+          the Departments module. Deletion must respect existing employee,
+          project and active-work assignments.
+        </p>
+      </div>
+    );
+  }
+
+  function renderMembers() {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="text-lg font-bold text-[#142d4e]">
+              Members and employees
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Membership overview for the selected organisation.
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
+            {members.length} total records
+          </div>
+        </div>
+
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search by user ID, role or designation..."
+          className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
+        />
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="w-full min-w-[650px] text-left">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 text-xs font-semibold text-slate-500">
+                  Member
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-slate-500">
+                  Designation
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-slate-500">
+                  Department
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-slate-500">
+                  Role
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-slate-500">
+                  Status
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredMembers.map((member) => (
+                <tr
+                  key={member.id}
+                  className="border-t border-slate-100"
+                >
+                  <td className="px-4 py-4">
+                    <p className="text-xs font-semibold text-[#142d4e]">
+                      {member.user_id.slice(0, 8)}...
+                    </p>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Membership ID: {member.id.slice(0, 8)}...
+                    </p>
+                  </td>
+
+                  <td className="px-4 py-4 text-xs text-slate-600">
+                    {member.designation || "Not assigned"}
+                  </td>
+
+                  <td className="px-4 py-4 text-xs text-slate-600">
+                    {departmentName(member.department_id)}
+                  </td>
+
+                  <td className="px-4 py-4">
+                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-semibold capitalize text-blue-700">
+                      {member.role.replace(/_/g, " ")}
+                    </span>
+                  </td>
+
+                  <td className="px-4 py-4">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+                        !member.status || member.status === "active"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {member.status || "Active"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+
+              {filteredMembers.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-12 text-center text-sm text-slate-400"
+                  >
+                    No matching members found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <p className="text-xs leading-5 text-slate-400">
+          Employee onboarding, transfers and membership administration are
+          handled through the Employees module.
+        </p>
+      </div>
+    );
+  }
+
+  function renderAccess() {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-bold text-[#142d4e]">
+            Roles and access
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Talvorah keeps organisation roles separate from official
+            employee designations and department appointments.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-semibold text-[#142d4e]">
+                Organisation Admin
+              </h3>
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-semibold text-blue-700">
+                Organisation role
+              </span>
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Manages organisation operations, employee onboarding,
+              department assignments and transfers, and department
+              administration.
+            </p>
+
+            <ul className="mt-3 space-y-2 text-xs text-slate-600">
+              <li>• Can delete ordinary employees.</li>
+              <li>• Cannot delete an Admin or Super Admin.</li>
+              <li>• Cannot assign official designations.</li>
+              <li>• Cannot appoint or remove Department Heads.</li>
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-semibold text-[#142d4e]">
+                Organisation Super Admin
+              </h3>
+              <span className="rounded-full bg-purple-50 px-3 py-1 text-[10px] font-semibold text-purple-700">
+                Organisation role
+              </span>
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Has the organisation administration capabilities of an Admin
+              and can additionally delete an Admin.
+            </p>
+
+            <ul className="mt-3 space-y-2 text-xs text-slate-600">
+              <li>• Can onboard employees and manage transfers.</li>
+              <li>• Can delete ordinary employees and Admins.</li>
+              <li>• Cannot delete another Super Admin.</li>
+              <li>• Cannot change official designations or HoD appointments.</li>
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-semibold text-[#142d4e]">
+                Platform Super Admin
+              </h3>
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-semibold text-emerald-800">
+                Platform authority
+              </span>
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Has platform-wide authority across organisations, including
+              the ability to assign official employee designations and
+              appoint or remove Department Heads.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <h3 className="font-semibold text-[#142d4e]">
+              Department Head
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              A department appointment rather than an organisation
+              administrator role. A Department Head must belong to the
+              department they lead. Appointment and removal are controlled
+              by the Platform Super Admin.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <h3 className="font-semibold text-[#142d4e]">
+            Official employee designations
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            These designations are separate from application roles.
+          </p>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {designations.map((designation, index) => (
+              <div
+                key={designation}
+                className="flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2.5"
+              >
+                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-[10px] font-bold text-slate-500">
+                  {index + 1}
+                </span>
+                <span className="text-sm text-slate-700">
+                  {designation}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderAccount() {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-bold text-[#142d4e]">
+            My account
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Your signed-in Talvorah account information.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#142d4e] text-lg font-bold text-white">
+              {(userEmail || "U").charAt(0).toUpperCase()}
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-[#142d4e]">
+                Signed-in account
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Talvorah user profile
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-4 border-t border-slate-100 pt-5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Email address
+              </p>
+              <p className="mt-1 break-all text-sm text-slate-700">
+                {userEmail || "Unavailable"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                User ID
+              </p>
+              <p className="mt-1 break-all font-mono text-xs text-slate-600">
+                {userId || "Unavailable"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Current access
+              </p>
+              <p className="mt-1 text-sm capitalize text-slate-700">
+                {currentRole.replace(/_/g, " ") || "Not available"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <h3 className="font-semibold text-[#142d4e]">
+            Password and security
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Password changes, recovery and additional account security
+            controls will be connected to the authentication settings.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderPlatform() {
+    if (!isPlatformSuperAdmin) {
+      return (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+          <h2 className="font-semibold text-amber-900">
+            Restricted platform settings
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-amber-800">
+            Platform administration is available only to the Platform
+            Super Admin. Organisation administrator roles do not grant
+            access to these controls.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-lg font-bold text-[#142d4e]">
+            Platform administration
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Platform-wide authority and organisation administration.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-100 text-xl">
+              ✓
+            </span>
+            <div>
+              <h3 className="font-semibold text-emerald-900">
+                Platform Super Admin access confirmed
+              </h3>
+              <p className="mt-1 text-xs text-emerald-800">
+                Your account has platform-level administrator access.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <h3 className="font-semibold text-[#142d4e]">
+            Organisation overview
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Current selected organisation information.
+          </p>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs text-slate-400">
+                Selected organisation
+              </p>
+              <p className="mt-2 text-sm font-semibold text-[#142d4e]">
+                {organisationName}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs text-slate-400">
+                Departments
+              </p>
+              <p className="mt-2 text-2xl font-bold text-[#142d4e]">
+                {departments.length}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs text-slate-400">
+                Organisation memberships
+              </p>
+              <p className="mt-2 text-2xl font-bold text-[#142d4e]">
+                {members.length}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs text-slate-400">
+                Your platform access
+              </p>
+              <p className="mt-2 text-sm font-semibold text-emerald-700">
+                Active
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <h3 className="font-semibold text-[#142d4e]">
+            Reserved platform controls
+          </h3>
+
+          <div className="mt-4 space-y-3">
+            {[
+              [
+                "Organisation management",
+                "Create, review and administer platform organisations.",
+              ],
+              [
+                "Designation management",
+                "Assign and change official employee designations.",
+              ],
+              [
+                "Department Head appointments",
+                "Appoint and remove Heads of Department.",
+              ],
+              [
+                "Platform administration",
+                "Manage platform-wide administration and oversight.",
+              ],
+              [
+                "Audit and activity oversight",
+                "Review important administrative actions across organisations.",
+              ],
+            ].map(([title, description]) => (
+              <div
+                key={title}
+                className="flex items-start justify-between gap-4 rounded-lg bg-slate-50 p-4"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-[#142d4e]">
+                    {title}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {description}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-500">
+                  Reserved
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-slate-400">
+            These are reserved administration areas. The corresponding
+            management workflows and backend permissions must be connected
+            before actions are enabled.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderContent() {
+    switch (activeTab) {
+      case "organisation":
+        return renderOrganisation();
+      case "departments":
+        return renderDepartments();
+      case "members":
+        return renderMembers();
+      case "access":
+        return renderAccess();
+      case "account":
+        return renderAccount();
+      case "platform":
+        return renderPlatform();
+      default:
+        return renderOrganisation();
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[#f5f7fa] p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-emerald-700">
+              WORKSPACE / CONFIGURATION
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-[#142d4e] sm:text-3xl">
+              Settings & Administration
+            </h1>
+            <p className="mt-2 text-sm text-slate-500">
+              Manage your workspace information, access and administration.
+            </p>
+          </div>
+
           <button
-            onClick={saveSettings}
-            className="rounded-xl bg-purple-600 hover:bg-purple-500 px-5 py-3 text-sm font-semibold"
+            onClick={loadSettings}
+            disabled={loading}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
           >
-            Save Changes
+            ↻ Refresh
           </button>
         </div>
 
-        {notice && (
-          <div className="mb-5 rounded-xl border border-purple-500/20 bg-purple-500/10 p-3 text-sm text-purple-200">
-            {notice}
+        {error && (
+          <div className="mb-5 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <span>{error}</span>
+            <button onClick={() => setError("")}>×</button>
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-7">
-          {[
-            { label: "Organisation Users", value: "128", note: "Registered employees" },
-            { label: "Access Roles", value: roles.length, note: "Configured role types" },
-            { label: "Security Status", value: "Active", note: "Workspace protection" },
-          ].map((item) => (
-            <div key={item.label} className="rounded-2xl border border-white/10 bg-[#101522] p-5">
-              <p className="text-sm text-gray-400">{item.label}</p>
-              <p className="text-2xl font-bold mt-2">{item.value}</p>
-              <p className="text-xs text-gray-500 mt-1">{item.note}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex gap-2 overflow-x-auto pb-3 mb-5">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`shrink-0 rounded-lg px-4 py-3 text-sm transition ${
-                activeTab === tab
-                  ? "bg-purple-600 text-white"
-                  : "bg-[#101522] border border-white/10 text-gray-400 hover:text-white"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        <section className="rounded-2xl border border-white/10 bg-[#101522] p-5 md:p-7">
-
-          {activeTab === "General" && (
-            <div>
-              <h3 className="text-xl font-semibold">General Settings</h3>
-              <p className="text-sm text-gray-500 mt-1 mb-7">
-                Manage your organisation's basic workspace information.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="text-sm text-gray-400">Organisation name</label>
-                  <input
-                    value={organisationName}
-                    onChange={(e) => setOrganisationName(e.target.value)}
-                    className="w-full mt-2 rounded-xl border border-white/10 bg-[#080b14] px-4 py-3 text-sm outline-none focus:border-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm text-gray-400">Industry</label>
-                  <select
-                    value={industry}
-                    onChange={(e) => setIndustry(e.target.value)}
-                    className="w-full mt-2 rounded-xl border border-white/10 bg-[#080b14] px-4 py-3 text-sm outline-none"
-                  >
-                    <option>Technology</option>
-                    <option>Engineering</option>
-                    <option>Finance</option>
-                    <option>Healthcare</option>
-                    <option>Education</option>
-                    <option>Manufacturing</option>
-                    <option>Construction</option>
-                    <option>Government</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm text-gray-400">Workspace language</label>
-                  <select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    className="w-full mt-2 rounded-xl border border-white/10 bg-[#080b14] px-4 py-3 text-sm outline-none"
-                  >
-                    <option>English</option>
-                    <option>French</option>
-                    <option>Spanish</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm text-gray-400">Organisation timezone</label>
-                  <select
-                    value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
-                    className="w-full mt-2 rounded-xl border border-white/10 bg-[#080b14] px-4 py-3 text-sm outline-none"
-                  >
-                    <option value="Africa/Lagos">Africa/Lagos (WAT)</option>
-                    <option value="Europe/London">Europe/London</option>
-                    <option value="America/New_York">America/New_York</option>
-                    <option value="Europe/Paris">Europe/Paris</option>
-                    <option value="Asia/Dubai">Asia/Dubai</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="mt-8 rounded-xl border border-white/10 bg-white/[0.02] p-5">
-                <h4 className="font-semibold">Workspace information</h4>
-                <p className="text-sm text-gray-500 mt-2">
-                  Your organisation's profile, departments, employees and workspace configuration will be managed centrally through Talvorah.
+        {loading ? (
+          <div className="flex min-h-[350px] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white">
+            <div className="mb-4 h-9 w-9 animate-spin rounded-full border-4 border-slate-200 border-t-emerald-600" />
+            <p className="text-sm text-slate-500">
+              Loading workspace settings...
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[250px_minmax(0,1fr)]">
+            <aside className="h-fit rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Configuration
                 </p>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "Roles & Permissions" && (
-            <div>
-              <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
-                <div>
-                  <h3 className="text-xl font-semibold">Roles & Permissions</h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Define what each user type can access.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowRoleForm(true)}
-                  className="rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-semibold hover:bg-purple-500"
-                >
-                  + Add Role
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                {roles.map((role) => (
-                  <div key={role.role} className="rounded-xl border border-white/10 bg-[#080b14] p-4 flex flex-wrap justify-between items-center gap-4">
-                    <div>
-                      <p className="font-semibold">{role.role}</p>
-                      <p className="text-sm text-gray-500 mt-1">{role.access}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold">{role.users}</p>
-                      <p className="text-xs text-gray-500">Users</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-                <p className="text-sm text-amber-300 font-medium">Permission configuration</p>
-                <p className="text-xs text-gray-400 mt-2">
-                  These are demonstration role descriptions. Actual access restrictions must be enforced by the authentication system and database policies, not just by the interface.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "Notifications" && (
-            <div>
-              <h3 className="text-xl font-semibold">Notification Preferences</h3>
-              <p className="text-sm text-gray-500 mt-1 mb-7">
-                Choose which workspace updates you want to receive.
-              </p>
-
-              {[
-                { label: "Email Notifications", description: "Receive workspace updates through email.", value: emailNotifications, set: setEmailNotifications },
-                { label: "Task Notifications", description: "Get notified when tasks are assigned or updated.", value: taskNotifications, set: setTaskNotifications },
-                { label: "Meeting Notifications", description: "Receive meeting invitations and schedule changes.", value: meetingNotifications, set: setMeetingNotifications },
-                { label: "Announcements", description: "Receive important organisation-wide announcements.", value: announcementNotifications, set: setAnnouncementNotifications },
-              ].map((item) => (
-                <div key={item.label} className="flex justify-between items-center gap-4 border-b border-white/10 py-5">
-                  <div>
-                    <p className="font-medium text-sm">{item.label}</p>
-                    <p className="text-xs text-gray-500 mt-1">{item.description}</p>
-                  </div>
-                  <button
-                    onClick={() => item.set(!item.value)}
-                    className={`w-12 h-6 shrink-0 rounded-full transition relative ${item.value ? "bg-purple-600" : "bg-gray-700"}`}
-                    aria-label={`Toggle ${item.label}`}
-                  >
-                    <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${item.value ? "left-7" : "left-1"}`} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {activeTab === "Security" && (
-            <div>
-              <h3 className="text-xl font-semibold">Security Settings</h3>
-              <p className="text-sm text-gray-500 mt-1 mb-7">
-                Manage workspace security preferences.
-              </p>
-
-              <div className="rounded-xl border border-white/10 bg-[#080b14] p-5 mb-4">
-                <div className="flex justify-between items-center gap-4">
-                  <div>
-                    <p className="font-medium">Two-Factor Authentication</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Require an additional verification step for account access.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setTwoFactor(!twoFactor)}
-                    className={`w-12 h-6 shrink-0 rounded-full transition relative ${twoFactor ? "bg-purple-600" : "bg-gray-700"}`}
-                    aria-label="Toggle two-factor authentication"
-                  >
-                    <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${twoFactor ? "left-7" : "left-1"}`} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-white/10 bg-[#080b14] p-5 mb-4">
-                <p className="font-medium">Password Management</p>
-                <p className="text-xs text-gray-500 mt-2">
-                  Password changes and recovery will be handled through the account authentication system.
+                <p className="mt-1 truncate text-sm font-bold text-[#142d4e]">
+                  {organisationName}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-white/10 bg-[#080b14] p-5">
-                <p className="font-medium">Active Sessions</p>
-                <p className="text-xs text-gray-500 mt-2">
-                  Session monitoring and remote sign-out will be available when authentication management is connected.
-                </p>
-              </div>
-            </div>
-          )}
+              <nav className="space-y-1">
+                {tabs
+                  .filter(
+                    (tab) =>
+                      tab.id !== "platform" || isPlatformSuperAdmin
+                  )
+                  .map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition ${
+                        activeTab === tab.id
+                          ? "bg-emerald-50 text-emerald-800"
+                          : "text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 text-base ${
+                          activeTab === tab.id
+                            ? "text-emerald-700"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {tab.id === "organisation"
+                          ? "▦"
+                          : tab.id === "departments"
+                            ? "▤"
+                            : tab.id === "members"
+                              ? "♙"
+                              : tab.id === "access"
+                                ? "⚿"
+                                : tab.id === "account"
+                                  ? "◎"
+                                  : "⚙"}
+                      </span>
 
-          {activeTab === "Billing" && (
-            <div>
-              <h3 className="text-xl font-semibold">Subscription & Billing</h3>
-              <p className="text-sm text-gray-500 mt-1 mb-7">
-                Manage your organisation's Talvorah subscription.
-              </p>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold">
+                          {tab.label}
+                        </span>
+                        <span className="mt-1 block text-[10px] leading-4 opacity-70">
+                          {tab.description}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+              </nav>
+            </aside>
 
-              <div className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-6 mb-5">
-                <p className="text-xs uppercase tracking-wider text-purple-300">Current Plan</p>
-                <h4 className="text-3xl font-bold mt-3">Free / Setup</h4>
-                <p className="text-sm text-gray-400 mt-2">
-                  Development workspace. No paid subscription is currently configured.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-white/10 bg-[#080b14] p-5">
-                  <p className="text-sm text-gray-400">Organisation users</p>
-                  <p className="text-2xl font-bold mt-2">128</p>
-                  <p className="text-xs text-gray-500 mt-1">Illustrative workspace figure</p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-[#080b14] p-5">
-                  <p className="text-sm text-gray-400">Billing status</p>
-                  <p className="text-2xl font-bold mt-2">Not configured</p>
-                  <p className="text-xs text-gray-500 mt-1">Payment integration pending</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "Audit Logs" && (
-            <div>
-              <h3 className="text-xl font-semibold">Audit Logs</h3>
-              <p className="text-sm text-gray-500 mt-1 mb-7">
-                Review important activities within your organisation.
-              </p>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm min-w-[600px]">
-                  <thead className="text-xs uppercase text-gray-500 bg-white/[0.03]">
-                    <tr>
-                      <th className="px-4 py-4">Activity</th>
-                      <th className="px-4 py-4">User</th>
-                      <th className="px-4 py-4">Date</th>
-                      <th className="px-4 py-4">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {initialLogs.map((log, index) => (
-                      <tr key={index} className="border-t border-white/5">
-                        <td className="px-4 py-4">{log.action}</td>
-                        <td className="px-4 py-4 text-gray-400">{log.user}</td>
-                        <td className="px-4 py-4 text-gray-400">{log.date}</td>
-                        <td className="px-4 py-4">
-                          <span className="text-emerald-400 text-xs">{log.status}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <p className="text-xs text-gray-600 mt-5">
-                These are sample entries. A real audit log will record verified actions from the database and application.
-              </p>
-            </div>
-          )}
-        </section>
-
-        {showRoleForm && (
-          <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-            <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101522] p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold">Create Custom Role</h3>
-                <button onClick={() => setShowRoleForm(false)} className="text-gray-400 text-xl">×</button>
-              </div>
-              <label className="text-sm text-gray-400">Role name</label>
-              <input
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value)}
-                placeholder="e.g. Project Coordinator"
-                className="w-full mt-2 rounded-xl border border-white/10 bg-[#080b14] px-4 py-3 text-sm outline-none focus:border-purple-500"
-              />
-              <div className="flex gap-3 mt-6">
-                <button
-                  onClick={() => setShowRoleForm(false)}
-                  className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={addRole}
-                  className="flex-1 rounded-xl bg-purple-600 px-4 py-3 text-sm font-semibold"
-                >
-                  Create Role
-                </button>
-              </div>
-            </div>
+            <main className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+              {renderContent()}
+            </main>
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 }
