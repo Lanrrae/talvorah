@@ -2,15 +2,18 @@
 "use client";
 
 import {
+  Suspense,
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import OrganisationSwitcher from "@/components/OrganisationSwitcher";
+import { createClient } from "@/utils/supabase/client";
 
 type ThemeMode = "light" | "dark" | "system";
 type Accent = "emerald" | "blue" | "violet" | "rose" | "amber" | "teal";
@@ -48,6 +51,7 @@ const navigation = [
       { label: "Messages", href: "/dashboard/messages", icon: "message" },
       { label: "Meetings & Calendar", href: "/dashboard/calendar", icon: "calendar" },
       { label: "Documents", href: "/dashboard/documents", icon: "file" },
+      { label: "Talvorah AI", href: "/dashboard/ai", icon: "sparkles" },
     ],
   },
   {
@@ -68,6 +72,7 @@ const icons: Record<string, string> = {
   message: "M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8z",
   calendar: "M8 2v4 M16 2v4 M3 10h18 M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2z",
   file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h8",
+  sparkles: "M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z M19 14l1.1 2.9L23 18l-2.9 1.1L19 22l-1.1-2.9L15 18l2.9-1.1L19 14z M5 2l.8 2.2L8 5l-2.2.8L5 8l-.8-2.2L2 5l2.2-.8L5 2z",
   settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.7 2.94-.09-.02a1.7 1.7 0 0 0-1.75.43l-.06.06h-3.4l-.06-.08a1.7 1.7 0 0 0-1.75-.43l-.09.02-1.7-2.94.06-.06A1.7 1.7 0 0 0 9.6 15l-.08-.07v-3.4l.08-.06a1.7 1.7 0 0 0 .43-1.75l-.02-.09 2.94-1.7.06.06a1.7 1.7 0 0 0 1.88.34l.07-.08h3.4l.06.08a1.7 1.7 0 0 0 1.75.43l.09-.02 1.7 2.94-.06.06A1.7 1.7 0 0 0 21 13.6l-.08.07z",
 };
 
@@ -95,12 +100,39 @@ function Icon({
   );
 }
 
-export default function WorkspaceShell({
+function formatRole(role: string) {
+  const roles: Record<string, string> = {
+    organisation_admin: "Organisation Admin",
+    organization_admin: "Organisation Admin",
+    department_head: "Department Head",
+    manager: "Manager",
+    employee: "Employee",
+    super_admin: "Platform Super Admin",
+  };
+
+  return roles[role] || role.replaceAll("_", " ");
+}
+
+function roleInitials(role: string) {
+  const initials: Record<string, string> = {
+    super_admin: "SA",
+    organisation_admin: "OA",
+    organization_admin: "OA",
+    department_head: "DH",
+    manager: "MA",
+    employee: "EM",
+  };
+
+  return initials[role] || "TM";
+}
+
+function WorkspaceShellContent({
   children,
 }: {
   children: ReactNode;
 }) {
   const pathname = usePathname();
+  const supabase = useMemo(() => createClient(), []);
 
   const [mode, setModeState] = useState<ThemeMode>("light");
   const [accent, setAccentState] = useState<Accent>("emerald");
@@ -109,16 +141,110 @@ export default function WorkspaceShell({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
+  const [userRole, setUserRole] = useState("loading");
+  const [roleLoading, setRoleLoading] = useState(true);
+
+  // Load the actual role of the signed-in user.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUserRole() {
+      setRoleLoading(true);
+
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError) throw userError;
+        if (!user) {
+          if (!cancelled) setUserRole("employee");
+          return;
+        }
+
+        const { data: adminData, error: adminError } =
+          await supabase.rpc("is_platform_super_admin");
+
+        if (adminError) throw adminError;
+
+        if (adminData === true) {
+          if (!cancelled) setUserRole("super_admin");
+          return;
+        }
+
+        const organisationId = localStorage.getItem(
+          "talvorah_organisation_id"
+        );
+
+        if (!organisationId) {
+          if (!cancelled) setUserRole("employee");
+          return;
+        }
+
+        const { data: membership, error: membershipError } = await supabase
+          .from("organisation_members")
+          .select("role")
+          .eq("user_id", user.id)
+          .eq("organisation_id", organisationId)
+          .eq("status", "active")
+          .maybeSingle();
+
+        if (membershipError) throw membershipError;
+
+        if (!cancelled) {
+          setUserRole(membership?.role || "employee");
+        }
+      } catch (error) {
+        console.error("Unable to load workspace role:", error);
+
+        if (!cancelled) {
+          setUserRole("employee");
+        }
+      } finally {
+        if (!cancelled) setRoleLoading(false);
+      }
+    }
+
+    loadUserRole();
+
+    const handleOrganisationChange = () => {
+      loadUserRole();
+    };
+
+    window.addEventListener(
+      "talvorah:organisation-changed",
+      handleOrganisationChange
+    );
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        "talvorah:organisation-changed",
+        handleOrganisationChange
+      );
+    };
+  }, [supabase]);
+
   useEffect(() => {
     const savedMode = localStorage.getItem("talvorah_theme");
     const savedAccent = localStorage.getItem("talvorah_accent");
 
-    if (savedMode === "light" || savedMode === "dark" || savedMode === "system") {
+    if (
+      savedMode === "light" ||
+      savedMode === "dark" ||
+      savedMode === "system"
+    ) {
       setModeState(savedMode);
     }
 
     const validAccents: Accent[] = [
-      "emerald", "blue", "violet", "rose", "amber", "teal",
+      "emerald",
+      "blue",
+      "violet",
+      "rose",
+      "amber",
+      "teal",
     ];
 
     if (validAccents.includes(savedAccent as Accent)) {
@@ -136,7 +262,9 @@ export default function WorkspaceShell({
     const updateTheme = () => {
       setResolvedTheme(
         mode === "system"
-          ? media.matches ? "dark" : "light"
+          ? media.matches
+            ? "dark"
+            : "light"
           : mode
       );
     };
@@ -166,6 +294,16 @@ export default function WorkspaceShell({
 
   const themeValue = { mode, accent, setMode, setAccent };
 
+  const displayRole =
+    roleLoading || userRole === "loading"
+      ? "Loading profile..."
+      : formatRole(userRole);
+
+  const initials =
+    roleLoading || userRole === "loading"
+      ? "..."
+      : roleInitials(userRole);
+
   return (
     <ThemeContext.Provider value={themeValue}>
       <div
@@ -175,7 +313,6 @@ export default function WorkspaceShell({
         suppressHydrationWarning
       >
         <div className="flex min-h-screen">
-
           {mobileOpen && (
             <button
               type="button"
@@ -191,7 +328,10 @@ export default function WorkspaceShell({
             }`}
           >
             <div className="flex items-center justify-between px-6 py-6">
-              <Link href="/dashboard" className="text-2xl font-bold tracking-tight">
+              <Link
+                href="/dashboard"
+                className="text-2xl font-bold tracking-tight"
+              >
                 Talvorah<span className="text-[var(--ws-accent)]">.</span>
               </Link>
 
@@ -246,14 +386,14 @@ export default function WorkspaceShell({
             <div className="border-t border-white/10 p-5">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-sm font-bold">
-                  OA
+                  {initials}
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-white">
-                    Organisation Admin
+                    {displayRole}
                   </p>
                   <p className="text-xs text-slate-400">
-                    Workspace administrator
+                    Talvorah Workspace
                   </p>
                 </div>
               </div>
@@ -277,7 +417,11 @@ export default function WorkspaceShell({
                   <span className="font-semibold text-[var(--ws-text)]">
                     {pathname === "/dashboard"
                       ? "Overview"
-                      : pathname.split("/").filter(Boolean).pop()?.replace(/-/g, " ")}
+                      : pathname
+                          .split("/")
+                          .filter(Boolean)
+                          .pop()
+                          ?.replace(/-/g, " ")}
                   </span>
                 </div>
 
@@ -330,12 +474,17 @@ export default function WorkspaceShell({
                   <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[var(--ws-accent)]" />
                 </button>
 
-                <div className="hidden items-center gap-2 border-l pl-4 sm:flex" style={{ borderColor: "var(--ws-border)" }}>
+                <div
+                  className="hidden items-center gap-2 border-l pl-4 sm:flex"
+                  style={{ borderColor: "var(--ws-border)" }}
+                >
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--ws-accent-soft)] text-sm font-bold text-[var(--ws-accent)]">
-                    OA
+                    {initials}
                   </div>
                   <div>
-                    <p className="text-xs font-semibold">Admin</p>
+                    <p className="text-xs font-semibold">
+                      {roleLoading ? "Loading..." : displayRole}
+                    </p>
                     <p className="text-[10px] text-[var(--ws-muted)]">
                       Workspace
                     </p>
@@ -353,7 +502,8 @@ export default function WorkspaceShell({
                 >
                   <p className="font-semibold">Notifications</p>
                   <p className="mt-2 text-sm text-[var(--ws-muted)]">
-                    You're all caught up. New workspace notifications will appear here.
+                    You're all caught up. New workspace notifications will
+                    appear here.
                   </p>
                   <button
                     type="button"
@@ -375,5 +525,19 @@ export default function WorkspaceShell({
         </div>
       </div>
     </ThemeContext.Provider>
+  );
+}
+
+export default function WorkspaceShell({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
+          Loading workspace...
+        </div>
+      }
+    >
+      <WorkspaceShellContent>{children}</WorkspaceShellContent>
+    </Suspense>
   );
 }

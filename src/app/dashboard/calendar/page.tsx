@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -20,6 +19,7 @@ type Meeting = {
   visibility: string;
   status: string;
   host_member_id: string;
+  department_id: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
 };
@@ -174,9 +174,14 @@ export default function CalendarPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
 
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  // Deterministic initial date prevents the prerendering error.
+  // The real current date is applied after the component mounts.
+  const [selectedDate, setSelectedDate] = useState(new Date(2000, 0, 1));
+  const [todayDate, setTodayDate] = useState<Date | null>(null);
+
   const [view, setView] = useState<ViewMode>("month");
   const [departmentFilter, setDepartmentFilter] = useState("all");
+
   const [typeFilters, setTypeFilters] = useState<EventType[]>([
     "meeting",
     "task",
@@ -230,7 +235,7 @@ export default function CalendarPage() {
         supabase
           .from("meetings")
           .select(
-            "id,title,description,meeting_type,visibility,status,host_member_id,scheduled_start,scheduled_end"
+            "id,title,description,meeting_type,visibility,status,host_member_id,department_id,scheduled_start,scheduled_end"
           )
           .eq("organisation_id", organisationId)
           .not("scheduled_start", "is", null)
@@ -278,6 +283,11 @@ export default function CalendarPage() {
   }, [supabase]);
 
   useEffect(() => {
+    const now = new Date();
+
+    setSelectedDate(now);
+    setTodayDate(now);
+
     loadCalendar();
 
     const handleOrganisationChange = () => {
@@ -312,7 +322,7 @@ export default function CalendarPage() {
         time: meeting.scheduled_start,
         endTime: meeting.scheduled_end,
         status: meeting.status,
-        departmentId: null,
+        departmentId: meeting.department_id,
         locationLabel:
           meeting.meeting_type === "instant"
             ? "Instant meeting"
@@ -389,8 +399,7 @@ export default function CalendarPage() {
 
       const matchesDepartment =
         departmentFilter === "all" ||
-        event.departmentId === departmentFilter ||
-        (event.type === "meeting" && departmentFilter === "all");
+        event.departmentId === departmentFilter;
 
       return matchesType && matchesDepartment;
     });
@@ -409,10 +418,9 @@ export default function CalendarPage() {
   }, [filteredEvents]);
 
   const selectedDateKey = localDateKey(selectedDate);
-
   const selectedDayEvents = eventsByDate.get(selectedDateKey) || [];
 
-  const todayKey = localDateKey(new Date());
+  const todayKey = todayDate ? localDateKey(todayDate) : "";
 
   const todayEvents = filteredEvents.filter(
     (event) => event.date === todayKey
@@ -440,8 +448,6 @@ export default function CalendarPage() {
     );
   }, [selectedDate]);
 
-  const dayHours = Array.from({ length: 24 }, (_, index) => index);
-
   function movePeriod(direction: number) {
     setSelectedDate((current) => {
       const next = new Date(current);
@@ -460,7 +466,9 @@ export default function CalendarPage() {
   }
 
   function goToToday() {
-    setSelectedDate(new Date());
+    const now = new Date();
+    setSelectedDate(now);
+    setTodayDate(now);
   }
 
   function toggleType(type: EventType) {
@@ -755,9 +763,11 @@ export default function CalendarPage() {
                         {monthCells.map((date) => {
                           const key = localDateKey(date);
                           const events = eventsByDate.get(key) || [];
+
                           const isCurrentMonth =
                             date.getMonth() === currentMonth &&
                             date.getFullYear() === currentYear;
+
                           const isToday = key === todayKey;
                           const isSelected = key === selectedDateKey;
 

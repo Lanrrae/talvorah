@@ -7,11 +7,12 @@ import { createClient } from "@/utils/supabase/client";
 type Meeting = {
   id: string;
   room_id: string;
+  department_id: string | null;
   host_member_id: string;
   title: string;
   description: string | null;
   meeting_type: "scheduled" | "instant";
-  visibility: "invited" | "organisation";
+  visibility: "invited" | "organisation" | "department";
   status: "scheduled" | "live" | "completed" | "cancelled";
   meeting_code: string;
   scheduled_start: string | null;
@@ -104,8 +105,9 @@ export default function MeetingsPage() {
   const [meetingType, setMeetingType] =
     useState<"scheduled" | "instant">("scheduled");
   const [visibility, setVisibility] =
-    useState<"invited" | "organisation">("invited");
+    useState<"invited" | "organisation" | "department">("invited");
   const [roomId, setRoomId] = useState("");
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState("");
   const [scheduledStart, setScheduledStart] = useState("");
   const [scheduledEnd, setScheduledEnd] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
@@ -144,7 +146,7 @@ export default function MeetingsPage() {
       supabase
         .from("meetings")
         .select(
-          "id, room_id, host_member_id, title, description, meeting_type, visibility, status, meeting_code, scheduled_start, scheduled_end, started_at, ended_at, created_at"
+          "id, room_id, department_id, host_member_id, title, description, meeting_type, visibility, status, meeting_code, scheduled_start, scheduled_end, started_at, ended_at, created_at"
         )
         .eq("organisation_id", organisationId)
         .order("created_at", { ascending: false }),
@@ -322,6 +324,7 @@ export default function MeetingsPage() {
     setMeetingType("scheduled");
     setVisibility("invited");
     setRoomId("");
+    setSelectedDepartmentId("");
     setScheduledStart("");
     setScheduledEnd("");
     setSelectedMembers([]);
@@ -366,6 +369,19 @@ export default function MeetingsPage() {
       return;
     }
 
+    if (visibility === "department" && !selectedDepartmentId) {
+      setError("Select the department whose members can access this meeting.");
+      return;
+    }
+
+    if (
+      visibility === "department" &&
+      !departments.some((department) => department.id === selectedDepartmentId)
+    ) {
+      setError("The selected department is not available in this organisation.");
+      return;
+    }
+
     if (meetingType === "scheduled" && !scheduledStart) {
       setError("Choose a date and time for the meeting.");
       return;
@@ -395,6 +411,7 @@ export default function MeetingsPage() {
       description: description.trim() || null,
       meeting_type: meetingType,
       visibility,
+      department_id: visibility === "department" ? selectedDepartmentId : null,
       meeting_code: meetingCode,
       livekit_room_name: livekitRoomName,
       status: isInstant ? "live" : "scheduled",
@@ -439,6 +456,7 @@ export default function MeetingsPage() {
         title: title.trim(),
         meeting_type: meetingType,
         visibility,
+        department_id: payload.department_id,
         status: isInstant ? "live" : "scheduled",
         room_id: roomId,
         scheduled_start: payload.scheduled_start,
@@ -459,7 +477,10 @@ export default function MeetingsPage() {
     }
 
     const participantIds = [
-      ...new Set([currentMemberId, ...selectedMembers]),
+      ...new Set([
+        currentMemberId,
+        ...(visibility === "invited" ? selectedMembers : []),
+      ]),
     ];
 
     const participantRows = participantIds.map((memberId) => ({
@@ -505,9 +526,7 @@ export default function MeetingsPage() {
     await loadMeetings();
   }
 
-  async function createRoom(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function createRoom() {
     setError("");
     setSuccess("");
 
@@ -796,7 +815,9 @@ export default function MeetingsPage() {
                           <span>
                             {meeting.visibility === "organisation"
                               ? "Organisation-wide"
-                              : "Invited participants"}
+                              : meeting.visibility === "department"
+                                ? `Department-only · ${departments.find((department) => department.id === meeting.department_id)?.name || "Selected department"}`
+                                : "Invited participants"}
                           </span>
                         </div>
                       </div>
@@ -904,20 +925,54 @@ export default function MeetingsPage() {
                     <label className={labelClass}>Who can join?</label>
                     <select
                       value={visibility}
-                      onChange={(event) =>
-                        setVisibility(
-                          event.target.value as "invited" | "organisation"
-                        )
-                      }
+                      onChange={(event) => {
+                        const nextVisibility = event.target.value as
+                          | "invited"
+                          | "organisation"
+                          | "department";
+                        setVisibility(nextVisibility);
+                        if (nextVisibility !== "invited") setSelectedMembers([]);
+                        if (nextVisibility !== "department") setSelectedDepartmentId("");
+                      }}
                       className={inputClass}
                     >
                       <option value="invited">Invited participants only</option>
                       <option value="organisation">
                         Everyone in organisation
                       </option>
+                      <option value="department">
+                        Members of a department
+                      </option>
                     </select>
                   </div>
                 </div>
+
+                {visibility === "department" && (
+                  <div>
+                    <label className={labelClass}>Department *</label>
+                    <select
+                      required
+                      value={selectedDepartmentId}
+                      onChange={(event) => setSelectedDepartmentId(event.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">Select department</option>
+                      {departments.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1.5 text-xs text-slate-500">
+                      Every active member of this department will be able to see the meeting. They do not need an individual invitation.
+                    </p>
+                    {departments.length === 0 && (
+                      <p className="mt-2 text-xs text-amber-700">
+                        No departments are available in this organisation.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {meetingType === "scheduled" && (
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -984,10 +1039,7 @@ export default function MeetingsPage() {
                   )}
 
                   {showRoomForm && (
-                    <form
-                      onSubmit={createRoom}
-                      className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
-                    >
+                    <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                       <h3 className="text-sm font-semibold text-slate-800">
                         New meeting room
                       </h3>
@@ -1051,12 +1103,13 @@ export default function MeetingsPage() {
                       )}
 
                       <button
-                        type="submit"
+                        type="button"
+                        onClick={createRoom}
                         className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
                       >
                         Save meeting room
                       </button>
-                    </form>
+                    </div>
                   )}
                 </div>
 

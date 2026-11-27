@@ -1,9 +1,8 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
 type Meeting = {
@@ -14,7 +13,8 @@ type Meeting = {
   title: string;
   description: string | null;
   meeting_type: "scheduled" | "instant";
-  visibility: "invited" | "organisation";
+  visibility: "invited" | "organisation" | "department";
+  department_id: string | null;
   meeting_code: string;
   livekit_room_name: string;
   status: "scheduled" | "live" | "completed" | "cancelled";
@@ -50,15 +50,14 @@ type Room = {
 
 export default function MeetingRoomPage() {
   const params = useParams();
-  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
-
   const meetingId = params.id as string;
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [room, setRoom] = useState<Room | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [currentMemberId, setCurrentMemberId] = useState("");
+  const [currentDepartmentId, setCurrentDepartmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -74,7 +73,7 @@ export default function MeetingRoomPage() {
     const { data: meetingData, error: meetingError } = await supabase
       .from("meetings")
       .select(
-        "id, organisation_id, room_id, host_member_id, title, description, meeting_type, visibility, meeting_code, livekit_room_name, status, scheduled_start, scheduled_end, started_at, ended_at, allow_screen_sharing, allow_recording, waiting_room_enabled, created_at"
+        "id, organisation_id, room_id, host_member_id, title, description, meeting_type, visibility, department_id, meeting_code, livekit_room_name, status, scheduled_start, scheduled_end, started_at, ended_at, allow_screen_sharing, allow_recording, waiting_room_enabled, created_at"
       )
       .eq("id", meetingId)
       .single();
@@ -111,7 +110,7 @@ export default function MeetingRoomPage() {
 
       supabase
         .from("organisation_members")
-        .select("id, user_id, designation")
+        .select("id, user_id, designation, department_id")
         .eq("organisation_id", currentMeeting.organisation_id)
         .eq("status", "active"),
     ]);
@@ -134,6 +133,7 @@ export default function MeetingRoomPage() {
     );
 
     setCurrentMemberId(currentMembership?.id ?? "");
+    setCurrentDepartmentId(currentMembership?.department_id ?? null);
 
     const participantRows = participantResult.data ?? [];
     const memberIds = [
@@ -250,8 +250,13 @@ export default function MeetingRoomPage() {
     (participant) => participant.invitation_status === "declined"
   );
 
+  const isDepartmentMember =
+    !!meeting?.department_id &&
+    currentDepartmentId === meeting.department_id;
+
   const canAccess =
     meeting?.visibility === "organisation" ||
+    (meeting?.visibility === "department" && isDepartmentMember) ||
     !!myParticipant ||
     isHost;
 
@@ -286,8 +291,14 @@ export default function MeetingRoomPage() {
     setWorking(false);
   }
 
-  async function joinOrganisationMeeting() {
+  async function joinMeeting() {
     if (!meeting || !currentMemberId) return;
+
+    const canSelfJoin =
+      meeting.visibility === "organisation" ||
+      (meeting.visibility === "department" && isDepartmentMember);
+
+    if (!canSelfJoin || meeting.status !== "live" || myParticipant) return;
 
     setWorking(true);
     setError("");
@@ -498,7 +509,9 @@ export default function MeetingRoomPage() {
             Invitation required
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            This meeting is restricted to invited participants.
+            {meeting.visibility === "department"
+              ? "This meeting is restricted to members of its assigned department."
+              : "This meeting is restricted to invited participants."}
           </p>
           <Link
             href="/dashboard/meetings"
@@ -522,7 +535,9 @@ export default function MeetingRoomPage() {
 
   const canEnter =
     hasJoined ||
-    (meeting.visibility === "organisation" && !myParticipant);
+    ((meeting.visibility === "organisation" ||
+      (meeting.visibility === "department" && isDepartmentMember)) &&
+      !myParticipant);
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-6 text-slate-800 sm:px-6 lg:px-8">
@@ -583,7 +598,9 @@ export default function MeetingRoomPage() {
                   <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white">
                     {meeting.visibility === "organisation"
                       ? "Organisation-wide"
-                      : "Invited participants"}
+                      : meeting.visibility === "department"
+                        ? "Department-only"
+                        : "Invited participants"}
                   </span>
 
                   {room && (
@@ -726,7 +743,9 @@ export default function MeetingRoomPage() {
                   <p className="font-semibold text-emerald-800">
                     {hasJoined
                       ? "You are registered as a participant."
-                      : "You can join this organisation-wide meeting."}
+                      : meeting.visibility === "department"
+                        ? "You can join this department meeting."
+                        : "You can join this organisation-wide meeting."}
                   </p>
 
                   <p className="mt-1 text-sm text-emerald-700">
@@ -736,7 +755,7 @@ export default function MeetingRoomPage() {
 
                   {!hasJoined && (
                     <button
-                      onClick={joinOrganisationMeeting}
+                      onClick={joinMeeting}
                       disabled={working}
                       className="mt-4 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >
@@ -852,6 +871,7 @@ export default function MeetingRoomPage() {
                   </p>
                   <p className="text-xs text-slate-500">Awaiting response</p>
                 </div>
+
                 <div>
                   <p className="text-2xl font-bold text-slate-900">
                     {declinedParticipants.length}
@@ -888,6 +908,7 @@ export default function MeetingRoomPage() {
                     <span className="text-sm text-slate-600">
                       {setting.label}
                     </span>
+
                     <span
                       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                         setting.enabled

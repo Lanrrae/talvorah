@@ -36,10 +36,17 @@ export default function OrganisationSwitcher() {
         if (authError) throw authError;
         if (!user) throw new Error("Please sign in.");
 
+        console.log("TALVORAH AUTH CHECK:", {
+          userId: user.id,
+          email: user.email,
+        });
+
         const { data: platformAdmin, error: roleError } =
           await supabase.rpc("is_platform_super_admin");
 
         if (roleError) throw roleError;
+
+        console.log("TALVORAH SUPER ADMIN CHECK:", platformAdmin);
 
         let available: Organisation[] = [];
 
